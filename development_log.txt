@@ -1,0 +1,4 @@
+## 2026-07-14
+- 치근단 병소(Periapical Lesion) 탐지 특화 모듈 `Dental_012` 폴더 및 구조(src, data, scripts) 생성 완료.
+- 향후 파이프라인(Dental_008 연동 등) 설계를 위한 `implementation_plan.md` 작성 및 사용자 승인 완료.
+- Mendeley 데이터셋 다운로드(DOI: 10.17632/kx52tk2ddj.3) 안내를 `README.md`에 추가.
