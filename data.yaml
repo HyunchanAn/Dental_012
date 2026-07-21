@@ -1,4 +1,4 @@
-path: \\rtx4060laptop-hc\Users\chema\Github\Dental_012\data\yolo_dataset
+path: D:\Github\Dental_012\data\yolo_dataset
 train: images/train
 val: images/val
 
