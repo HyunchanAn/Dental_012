@@ -2,3 +2,7 @@
 - 치근단 병소(Periapical Lesion) 탐지 특화 모듈 `Dental_012` 폴더 및 구조(src, data, scripts) 생성 완료.
 - 향후 파이프라인(Dental_008 연동 등) 설계를 위한 `implementation_plan.md` 작성 및 사용자 승인 완료.
 - Mendeley 데이터셋 다운로드(DOI: 10.17632/kx52tk2ddj.3) 안내를 `README.md`에 추가.
+
+## 2026-10-21
+- `src/inference.py`에 치근단(Apex) 중심 2-Stage 고해상도 패치 추출기(`extract_apex_roi_patches`), 전역 좌표 역투영(`project_patch_bbox_to_global`) 및 2-Stage 추론 메서드(`predict_two_stage_apex_patches`) 추가 완료
+- `tests/test_inference.py`에 상악(`#16`)·하악(`#36`) 치근단 패치 추출 및 좌표 역투영 왕복 정합성 단위 테스트 추가 완료

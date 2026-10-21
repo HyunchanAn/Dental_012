@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.inference import PeriapicalPredictor, match_lesions_to_teeth
+from src.inference import (
+    PeriapicalPredictor,
+    extract_apex_roi_patches,
+    match_lesions_to_teeth,
+    project_patch_bbox_to_global,
+)
 
 
 def test_predictor_initialization_without_weights():
@@ -52,3 +57,22 @@ def test_multi_rooted_molar_apex_attribution_and_guard():
     assert matched[1]["isolated_anatomical_suspicion"] is False
     assert matched[2]["fdi"] is None
     assert matched[2]["isolated_anatomical_suspicion"] is True
+
+
+def test_two_stage_apex_patch_extraction_and_inverse_projection():
+    pano = np.full((600, 1000, 3), 120, dtype=np.uint8)
+    teeth_data = [
+        {"fdi": 16, "bbox": [200, 150, 280, 280]},  # Maxillary: apex near y=150
+        {"fdi": 36, "bbox": [700, 350, 780, 480]},  # Mandibular: apex near y=480
+    ]
+    patches = extract_apex_roi_patches(pano, teeth_data, patch_size=256)
+    assert len(patches) == 2
+    assert patches[0]["fdi"] == 16
+    assert patches[0]["patch"].shape == (256, 256, 3)
+    assert patches[1]["fdi"] == 36
+    assert patches[1]["patch"].shape == (256, 256, 3)
+
+    # Verify inverse projection round-trip accuracy (< 1 px)
+    crop_coords = (100, 200, 300, 400)  # 200x200 region
+    global_bbox = project_patch_bbox_to_global([64.0, 64.0, 192.0, 192.0], crop_coords, patch_size=256)
+    assert global_bbox == [150, 250, 250, 350]
