@@ -1,6 +1,8 @@
 import os
 import argparse
+import torch
 from ultralytics import YOLO
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train YOLOv11 for Periapical Lesion Detection")
@@ -11,24 +13,24 @@ def main():
     parser.add_argument("--weights", type=str, default="yolo11s.pt", help="Base weights")
     args = parser.parse_args()
 
-    # Load a model
-    print(f"Loading base model: {args.weights}")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Loading base model: {args.weights} on device={device}")
     model = YOLO(args.weights)
 
-    # Train the model
     print("Starting training...")
-    results = model.train(
+    model.train(
         data=args.data,
         epochs=args.epochs,
         batch=args.batch,
         imgsz=args.imgsz,
         project="runs/detect",
         name="periapical_yolo11s",
-        patience=20, # Early stopping patience
+        patience=20,
         save=True,
-        device="cuda" # Ensure it uses GPU on the workstation
+        device=device,
     )
     print("Training completed. Results saved in runs/detect/periapical_yolo11s")
+
 
 if __name__ == "__main__":
     main()

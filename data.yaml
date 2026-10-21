@@ -1,4 +1,4 @@
-path: D:\Github\Dental_012\data\yolo_dataset
+path: data/yolo_dataset_augmented
 train: images/train
 val: images/val
 
