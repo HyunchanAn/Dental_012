@@ -12,3 +12,8 @@
 
 2026-10-28
 - 이슈 #2 해결: `requirements.txt`에 런타임 의존성(`numpy`, `opencv-python-headless`, `torch`, `ultralytics`, `pyyaml`)을 명시하고 `Dental_000/tests/tests_012/test_prepare_data.py` 다중 경로 탐색 및 `.github/workflows/ci.yml` 로컬·중앙 테스트 병행 실행을 구성하여 원격 GitHub Actions CI 복구 완료.
+
+2026-11-23
+- 이슈 #3 해결 (`[P2] 치근단 병변 탐지·분류 연동 (008·013 안정화 후 착수)`):
+  - `src/inference.py`: `Dental_008` 폴리곤 주축 치근단(`compute_tooth_axis_and_apex`) 및 `Dental_013` 근관치료(`Endodontic (RCT)`) 치아 연동(`link_periapical_with_008_and_013`, `rct_fdis`)을 구현하여 인접 치근단 경계 병소의 원인 치아 동점 우선 판별, `post_rct_periapical_lesion` / `untreated_periapical_lesion` 세분류, `PanoramaHiTLDocument.lesions` 기록을 통합함.
+  - `tests/test_inference.py` 단위 테스트 추가 및 전체 통과 확인.

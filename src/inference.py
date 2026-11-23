@@ -1,7 +1,14 @@
 import os
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import cv2
 import numpy as np
+
+from dental_core.schemas.panorama_contract import (
+    LesionAnnotation,
+    PanoramaHiTLDocument,
+    ToothAnnotation,
+    compute_tooth_axis_and_apex,
+)
 
 try:
     from ultralytics import YOLO
@@ -38,8 +45,8 @@ def extract_apex_roi_patches(
         except (ValueError, TypeError):
             continue
 
-        bbox = tooth.get("bbox")
-        contour = tooth.get("contour")
+        bbox = tooth.get("bbox_xyxy") or tooth.get("bbox")
+        contour = tooth.get("polygon_px") or tooth.get("contour")
         if bbox is not None and len(bbox) == 4:
             tx1, ty1, tx2, ty2 = [float(c) for c in bbox]
         elif contour is not None and len(contour) > 0:
@@ -55,6 +62,9 @@ def extract_apex_roi_patches(
 
         is_maxillary = 11 <= fdi_num <= 28
         apex_y = ty1 if is_maxillary else ty2
+        if contour is not None and len(contour) >= 4:
+            axis_info = compute_tooth_axis_and_apex(fdi_num, [tx1, ty1, tx2, ty2], contour)
+            tcx, apex_y = axis_info["apex_xy"]
 
         half_w = max(tw * (0.5 + margin_ratio), 32.0)
         half_h = max(th * margin_ratio, 32.0)
@@ -116,27 +126,47 @@ def project_patch_bbox_to_global(
     return [gx1, gy1, gx2, gy2]
 
 
+def _collect_rct_set(
+    teeth_data: Sequence[Dict[str, Any]],
+    rct_fdis: Optional[Sequence[int]] = None,
+) -> Set[int]:
+    rct_set: Set[int] = set(int(f) for f in (rct_fdis or []))
+    for tooth in teeth_data:
+        fdi = tooth.get("fdi")
+        if fdi is None:
+            continue
+        try:
+            fdi_int = int(str(fdi).lstrip("#"))
+        except (TypeError, ValueError):
+            continue
+        tags = tooth.get("restoration_tags") or []
+        if any("endodontic" in str(t).lower() or "rct" in str(t).lower() for t in tags):
+            rct_set.add(fdi_int)
+    return rct_set
+
+
 def match_lesions_to_teeth(
     lesions: List[Dict[str, Any]],
     teeth_data: List[Dict[str, Any]],
     anatomical_guard: bool = True,
+    rct_fdis: Optional[Sequence[int]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Matches detected periapical lesions to the nearest anatomical tooth root apex.
-    - Maxillary teeth (FDI 11-28): root apex is near the superior border (ty1);
-      molars (6, 7, 8) use multi-rooted mesial/central/distal apex candidate anchors.
-    - Mandibular teeth (FDI 31-48): root apex is near the inferior border (ty2);
-      molars (6, 7, 8) use multi-rooted mesial/central/distal apex candidate anchors.
-    - Unmatched radiolucencies receive isolated_anatomical_suspicion=True when
-      anatomical_guard is enabled (protecting against mental foramen / maxillary sinus FPs).
+    Matches detected periapical lesions to the nearest anatomical tooth root apex,
+    incorporating Dental_008 polygon principal-axis apices and Dental_013 Endodontic (RCT)
+    tie-breaking & post-RCT periapical subtype classification.
     """
+    rct_set = _collect_rct_set(teeth_data, rct_fdis=rct_fdis)
+
     for lesion in lesions:
-        lx1, ly1, lx2, ly2 = [float(v) for v in lesion["bbox"][:4]]
+        raw_box = lesion.get("bbox") or lesion.get("bbox_xyxy")
+        lx1, ly1, lx2, ly2 = [float(v) for v in raw_box[:4]]
         cx = (lx1 + lx2) / 2.0
         cy = (ly1 + ly2) / 2.0
 
         best_fdi: Optional[int] = None
         min_dist = float("inf")
+        raw_geom_dist = float("inf")
 
         for tooth in teeth_data:
             fdi = tooth.get("fdi")
@@ -147,8 +177,8 @@ def match_lesions_to_teeth(
             except (ValueError, TypeError):
                 continue
 
-            contour = tooth.get("contour")
-            bbox = tooth.get("bbox")
+            contour = tooth.get("polygon_px") or tooth.get("contour")
+            bbox = tooth.get("bbox_xyxy") or tooth.get("bbox")
 
             if bbox is not None and len(bbox) == 4:
                 tx1, ty1, tx2, ty2 = [float(c) for c in bbox]
@@ -167,30 +197,36 @@ def match_lesions_to_teeth(
             is_mandibular = 31 <= fdi_num <= 48
             is_molar = (fdi_num % 10) in (6, 7, 8)
 
+            axis_apex_xy: Optional[List[float]] = None
+            if contour is not None and len(contour) >= 4:
+                pts_2d = np.asarray(contour, dtype=np.float64).reshape(-1, 2).tolist()
+                axis_info = compute_tooth_axis_and_apex(fdi_num, [tx1, ty1, tx2, ty2], pts_2d)
+                axis_apex_xy = axis_info["apex_xy"]
+
             if is_maxillary:
-                apex_y = ty1
+                apex_y = axis_apex_xy[1] if axis_apex_xy else ty1
                 if is_molar:
                     apex_candidates = [
                         tx1 + tooth_w * 0.20,
-                        tooth_cx,
+                        axis_apex_xy[0] if axis_apex_xy else tooth_cx,
                         tx2 - tooth_w * 0.20,
                     ]
                     apex_x = min(apex_candidates, key=lambda ax: abs(cx - ax))
                 else:
-                    apex_x = tooth_cx
+                    apex_x = axis_apex_xy[0] if axis_apex_xy else tooth_cx
                 if cy > (ty1 + tooth_h * 0.7):
                     continue
             elif is_mandibular:
-                apex_y = ty2
+                apex_y = axis_apex_xy[1] if axis_apex_xy else ty2
                 if is_molar:
                     apex_candidates = [
                         tx1 + tooth_w * 0.15,
-                        tooth_cx,
+                        axis_apex_xy[0] if axis_apex_xy else tooth_cx,
                         tx2 - tooth_w * 0.15,
                     ]
                     apex_x = min(apex_candidates, key=lambda ax: abs(cx - ax))
                 else:
-                    apex_x = tooth_cx
+                    apex_x = axis_apex_xy[0] if axis_apex_xy else tooth_cx
                 if cy < (ty2 - tooth_h * 0.7):
                     continue
             else:
@@ -203,33 +239,132 @@ def match_lesions_to_teeth(
             if dx > (tooth_w * 1.5):
                 continue
 
-            dist = float(np.sqrt((dx * 1.3) ** 2 + (dy * 0.9) ** 2))
+            geom_dist = float(np.sqrt((dx * 1.3) ** 2 + (dy * 0.9) ** 2))
+            eff_dist = geom_dist
 
             if fdi_num % 10 == 8:
-                dist += 40.0
-            if (fdi_num % 10 == 6) and dist < 100.0:
-                dist -= 40.0
+                eff_dist += 40.0
+            if (fdi_num % 10 == 6) and geom_dist < 100.0:
+                eff_dist -= 40.0
 
-            if dist < min_dist:
-                min_dist = dist
+            # Clinical tie-breaker: prioritize RCT-treated root apex when radiolucency lies between neighbors
+            if fdi_num in rct_set and geom_dist < 150.0:
+                eff_dist -= 25.0
+
+            if eff_dist < min_dist:
+                min_dist = eff_dist
+                raw_geom_dist = geom_dist
                 best_fdi = fdi_num
 
         if best_fdi is not None and min_dist < 180.0:
+            is_rct = best_fdi in rct_set
             lesion["fdi"] = best_fdi
-            lesion["apex_distance"] = round(float(min_dist), 1)
+            lesion["apex_distance"] = round(float(max(0.0, raw_geom_dist)), 1)
             lesion["isolated_anatomical_suspicion"] = False
+            lesion["rct_associated"] = is_rct
+            lesion["lesion_subtype"] = (
+                "post_rct_periapical_lesion" if is_rct else "untreated_periapical_lesion"
+            )
+            conf_val = float(lesion.get("confidence", 0.5))
+            if (
+                is_rct
+                and lesion.get("clinical_status") == "REVIEW_REQUIRED"
+                and conf_val >= 0.35
+                and raw_geom_dist <= 95.0
+            ):
+                lesion["clinical_status"] = "DEFINITE"
+                lesion["rct_confidence_boosted"] = True
+            else:
+                lesion.setdefault("rct_confidence_boosted", False)
         else:
             lesion["fdi"] = None
+            lesion["rct_associated"] = None
+            lesion["lesion_subtype"] = "unmatched_radiolucency"
+            lesion["rct_confidence_boosted"] = False
             if anatomical_guard:
                 lesion["isolated_anatomical_suspicion"] = True
 
     return lesions
 
 
+def link_periapical_with_008_and_013(
+    lesions: List[Dict[str, Any]],
+    doc_or_teeth: Union[PanoramaHiTLDocument, Dict[Any, Any], Sequence[Any]],
+    rct_fdis: Optional[Sequence[int]] = None,
+    anatomical_guard: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Integrates Dental_012 periapical detections with Dental_008 FDI segmentation
+    and Dental_013 Endodontic (RCT) classifications, updating `PanoramaHiTLDocument.lesions`
+    while preserving clinician-edited HiTL entries.
+    """
+    teeth_dicts: List[Dict[str, Any]] = []
+    if isinstance(doc_or_teeth, PanoramaHiTLDocument):
+        for t in doc_or_teeth.teeth:
+            teeth_dicts.append(
+                {
+                    "fdi": t.fdi,
+                    "bbox": list(t.bbox_xyxy),
+                    "contour": list(t.polygon_px) if t.polygon_px else None,
+                    "restoration_tags": list(t.restoration_tags),
+                }
+            )
+    elif isinstance(doc_or_teeth, dict):
+        for k, val in doc_or_teeth.items():
+            if isinstance(val, dict):
+                entry = dict(val)
+                entry.setdefault("fdi", k)
+                teeth_dicts.append(entry)
+    else:
+        for item in doc_or_teeth:
+            if isinstance(item, ToothAnnotation):
+                teeth_dicts.append(
+                    {
+                        "fdi": item.fdi,
+                        "bbox": list(item.bbox_xyxy),
+                        "contour": list(item.polygon_px) if item.polygon_px else None,
+                        "restoration_tags": list(item.restoration_tags),
+                    }
+                )
+            elif isinstance(item, dict):
+                teeth_dicts.append(dict(item))
+
+    matched = match_lesions_to_teeth(
+        lesions,
+        teeth_dicts,
+        anatomical_guard=anatomical_guard,
+        rct_fdis=rct_fdis,
+    )
+
+    if isinstance(doc_or_teeth, PanoramaHiTLDocument):
+        preserved = [
+            l
+            for l in doc_or_teeth.lesions
+            if l.category != "periapical" or l.clinician_corrected
+        ]
+        for item in matched:
+            raw_box = item.get("bbox") or item.get("bbox_xyxy")
+            preserved.append(
+                LesionAnnotation(
+                    category="periapical",
+                    label=str(item.get("lesion_subtype") or "periapical"),
+                    bbox_xyxy=[float(v) for v in raw_box[:4]],
+                    fdi=item.get("fdi"),
+                    confidence=float(item.get("confidence", 0.5)),
+                    clinical_status=str(item.get("clinical_status", "DEFINITE")),
+                    rct_associated=item.get("rct_associated"),
+                    clinician_corrected=False,
+                )
+            )
+        doc_or_teeth.lesions = preserved
+
+    return matched
+
+
 class PeriapicalPredictor:
     """
     Standalone Periapical Lesion Predictor (YOLO11s + Multi-Rooted Apex FDI Attribution
-    + 2-Stage Apex Patch Inference Support).
+    + Dental_013 RCT Correlation + 2-Stage Apex Patch Inference Support).
     """
 
     def __init__(self, model_path: str = "models/best.onnx"):
@@ -252,6 +387,7 @@ class PeriapicalPredictor:
         threshold_definite: float = 0.50,
         threshold_review: float = 0.25,
         anatomical_guard: bool = True,
+        rct_fdis: Optional[Sequence[int]] = None,
     ) -> Dict[str, Any]:
         self.load_model()
         if self.model is None:
@@ -283,7 +419,10 @@ class PeriapicalPredictor:
 
         if teeth_data and lesions:
             match_lesions_to_teeth(
-                lesions, teeth_data, anatomical_guard=anatomical_guard
+                lesions,
+                teeth_data,
+                anatomical_guard=anatomical_guard,
+                rct_fdis=rct_fdis,
             )
 
         return {"module_name": "Dental_012_periapical", "lesions": lesions}
@@ -295,6 +434,7 @@ class PeriapicalPredictor:
         patch_size: int = 256,
         threshold_definite: float = 0.50,
         threshold_review: float = 0.25,
+        rct_fdis: Optional[Sequence[int]] = None,
     ) -> Dict[str, Any]:
         """
         Executes 2-Stage periapical lesion detection on high-resolution root apex patches
@@ -308,6 +448,7 @@ class PeriapicalPredictor:
                 "lesions": [],
             }
 
+        rct_set = _collect_rct_set(teeth_data, rct_fdis=rct_fdis)
         apex_patches = extract_apex_roi_patches(
             image, teeth_data, patch_size=patch_size
         )
@@ -324,9 +465,10 @@ class PeriapicalPredictor:
                         raw_xyxy, crop_coords, patch_size=patch_size
                     )
                     conf = float(box.conf[0].item())
+                    is_rct = fdi_num in rct_set
                     status = (
                         "DEFINITE"
-                        if conf >= threshold_definite
+                        if (conf >= threshold_definite or (is_rct and conf >= 0.35))
                         else "REVIEW_REQUIRED"
                     )
                     lesions.append(
@@ -335,6 +477,12 @@ class PeriapicalPredictor:
                             "confidence": round(conf, 2),
                             "clinical_status": status,
                             "fdi": fdi_num,
+                            "rct_associated": is_rct,
+                            "lesion_subtype": (
+                                "post_rct_periapical_lesion"
+                                if is_rct
+                                else "untreated_periapical_lesion"
+                            ),
                             "isolated_anatomical_suspicion": False,
                         }
                     )

@@ -19,7 +19,7 @@
 2. [모델 학습 (`src/train.py`)]: `data.yaml`(`path: data/yolo_dataset_augmented`)을 이용하여 `YOLO11s` 모델을 학습합니다 (`torch.cuda.is_available()` 자동 감지 기반 CUDA/CPU 폴백 지원).
 3. [단독 추론, 2-Stage 치근단 패치 크롭 및 다근치 치근단 FDI 매칭 (`src/inference.py` / `src/predict.py`)]:
    - `PeriapicalPredictor`: `YOLO11s` 치근단 병소 바운딩 박스 추론, 2-Stage 고해상도 치근단(Apex) 패치 크롭·역투영(`extract_apex_roi_patches`, `project_patch_bbox_to_global`, `predict_two_stage_apex_patches`), 그리고 임상 이중 임계값(`DEFINITE >= 0.50`, `REVIEW_REQUIRED >= 0.25`) 분류를 수행합니다.
-   - `match_lesions_to_teeth`: 상악(`11~28`, 상단 치근단 `ty1`) 및 하악(`31~48`, 하단 치근단 `ty2`)의 해부학적 치근단 방향과 대구치(`#6, #7, #8`) 다근(근심·중앙·원심 치근단) 후보 앵커점을 계산하여 가장 인접한 치아 FDI 번호를 할당합니다. 치아 치근단과 무관한 고립 투과상은 `isolated_anatomical_suspicion=True` 안전 플래그를 부여합니다.
+   - `match_lesions_to_teeth` & `link_periapical_with_008_and_013`: 상악(`11~28`, 상단 치근단 `ty1`) 및 하악(`31~48`, 하단 치근단 `ty2`)의 해부학적 치근단 방향, `Dental_008` 폴리곤 주축 치근단(`compute_tooth_axis_and_apex`), 대구치(`#6, #7, #8`) 다근 후보 앵커점, 그리고 `Dental_013` 근관치료(`Endodontic (RCT)`) 치아 우선 매칭·세분류(`post_rct_periapical_lesion` vs `untreated_periapical_lesion`)를 결합하여 원인 치아 FDI 번호를 할당하고 `PanoramaHiTLDocument.lesions`에 기록합니다. 치아 치근단과 무관한 고립 투과상은 `isolated_anatomical_suspicion=True` 안전 플래그를 부여합니다.
 
 ---
 

@@ -4,9 +4,15 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from dental_core.schemas.panorama_contract import (
+    PanoramaHiTLDocument,
+    PanoramaImageMeta,
+    ToothAnnotation,
+)
 from src.inference import (
     PeriapicalPredictor,
     extract_apex_roi_patches,
+    link_periapical_with_008_and_013,
     match_lesions_to_teeth,
     project_patch_bbox_to_global,
 )
@@ -76,3 +82,48 @@ def test_two_stage_apex_patch_extraction_and_inverse_projection():
     crop_coords = (100, 200, 300, 400)  # 200x200 region
     global_bbox = project_patch_bbox_to_global([64.0, 64.0, 192.0, 192.0], crop_coords, patch_size=256)
     assert global_bbox == [150, 250, 250, 350]
+
+
+def test_rct_tie_breaking_and_hitl_document_linking():
+    # Two adjacent mandibular premolars (#44 at cx=220, #45 at cx=270), lesion centered at cx=246 (slightly closer to #44)
+    doc = PanoramaHiTLDocument(
+        image_meta=PanoramaImageMeta(filename="rct_periapical.png", width=1000, height=600),
+        teeth=[
+            ToothAnnotation(fdi=44, bbox_xyxy=[200.0, 350.0, 240.0, 480.0], restoration_tags=[]),
+            ToothAnnotation(
+                fdi=45,
+                bbox_xyxy=[250.0, 350.0, 290.0, 480.0],
+                restoration_tags=["Endodontic (RCT)", "Crown/Bridge"],
+            ),
+            ToothAnnotation(fdi=34, bbox_xyxy=[650.0, 350.0, 690.0, 480.0], restoration_tags=[]),
+        ],
+    )
+
+    lesions = [
+        {
+            "bbox": [231.0, 470.0, 261.0, 500.0],  # cx=246, between #44(220) and #45(270); #45 has RCT
+            "confidence": 0.41,
+            "clinical_status": "REVIEW_REQUIRED",
+        },
+        {
+            "bbox": [655.0, 472.0, 685.0, 505.0],  # Untreated #34 apex
+            "confidence": 0.68,
+            "clinical_status": "DEFINITE",
+        },
+    ]
+
+    matched = link_periapical_with_008_and_013(lesions, doc)
+    assert matched[0]["fdi"] == 45
+    assert matched[0]["rct_associated"] is True
+    assert matched[0]["lesion_subtype"] == "post_rct_periapical_lesion"
+    assert matched[0]["clinical_status"] == "DEFINITE"
+    assert matched[0]["rct_confidence_boosted"] is True
+
+    assert matched[1]["fdi"] == 34
+    assert matched[1]["rct_associated"] is False
+    assert matched[1]["lesion_subtype"] == "untreated_periapical_lesion"
+
+    assert len(doc.lesions) == 2
+    assert doc.lesions[0].category == "periapical"
+    assert doc.lesions[0].fdi == 45
+    assert doc.lesions[0].rct_associated is True
