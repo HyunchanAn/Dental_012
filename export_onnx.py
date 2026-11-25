@@ -2,10 +2,9 @@ import os
 from huggingface_hub import HfApi
 from dental_core.core.onnx_exporter import export_yolov8_to_onnx, export_classifier_to_onnx
 
-# NOTE: Adjust MODEL_TYPE to "yolo" or "classifier" based on this module's architecture
 MODEL_TYPE = "yolo"
-REPO_ID = "HyunchanAn/Dental_012"
-PT_PATH = "weights/best.pt" # Update path if different
+REPO_ID = "chemahc94/Dental_012"
+PT_PATH = "runs/detect/periapical_v2_finetune/weights/best.pt"
 
 def main():
     if not os.path.exists(PT_PATH):

@@ -1,4 +1,4 @@
-![Status](https://img.shields.io/badge/Status-v1.0%20Release-brightgreen "Status") ![Python](https://img.shields.io/badge/Python-3.12%2B-blue "Python") ![Backend](https://img.shields.io/badge/Backend-YOLO11s%20%2B%20Apex%20Attribution-red "Backend") ![License](https://img.shields.io/badge/License-MIT-green "License") ![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD%20Pipeline-passing-brightgreen?logo=github "CI/CD Pipeline")
+![Status](https://img.shields.io/badge/Status-v1.0%20Release-brightgreen "Status") ![Python](https://img.shields.io/badge/Python-3.10%2B-blue "Python") ![Backend](https://img.shields.io/badge/Backend-YOLO11s%20%2B%20Apex%20Attribution-red "Backend") ![License](https://img.shields.io/badge/License-MIT-green "License") ![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD%20Pipeline-passing-brightgreen?logo=github "CI/CD Pipeline")
 
 # Dental_012: Periapical Lesion Detection Module (치근단 병소 탐지 및 다근치 치근단 매핑)
 
@@ -27,7 +27,7 @@
 
 - [검증 데이터셋]: 환자 분리(Patient-disjoint) 독립 검증 세트 `825장` (정상 해부학적 음영 Negative Background 340장 포함, 정답 병소 `1,344개`)
 - [프로덕션 가중치 식별자]: `best.onnx` (SHA-256: `ee43dc87...`)
-- [정량 지표 (`Dental_000/reports/260917_2105_Dental012_Negative_Aug_Benchmark_Report.md`)]:
+- [정량 지표 (`Dental_000/reports_archive/260917_2105_Dental012_Negative_Aug_Benchmark_Report.md`)]:
   - `mAP@0.5`: `73.7%` ~ `73.8%` (구형 양성 단독 학습 `66.8%` 대비 `+7.0%p` 향상)
   - `Precision`: `70.9%` ~ `71.7%` (이공·상악동 기저부 등 정상 해부학적 골 투과상 오탐 억제)
   - `Recall`: `66.9%` ~ `68.2%`

@@ -60,7 +60,7 @@ def extract_apex_roi_patches(
         th = max(16.0, ty2 - ty1)
         tcx = (tx1 + tx2) / 2.0
 
-        is_maxillary = 11 <= fdi_num <= 28
+        is_maxillary = (fdi_num // 10) in (1, 2, 5, 6)
         apex_y = ty1 if is_maxillary else ty2
         if contour is not None and len(contour) >= 4:
             axis_info = compute_tooth_axis_and_apex(fdi_num, [tx1, ty1, tx2, ty2], contour)
@@ -83,10 +83,10 @@ def extract_apex_roi_patches(
 
         crop = image[cy1:cy2, cx1:cx2].copy()
         if crop.ndim == 3 and crop.shape[2] == 3:
-            lab = cv2.cvtColor(crop, cv2.COLOR_RGB2LAB)
+            lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
             l_ch, a_ch, b_ch = cv2.split(lab)
             lab = cv2.merge((clahe.apply(l_ch), a_ch, b_ch))
-            crop = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+            crop = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         elif crop.ndim == 2:
             crop = clahe.apply(crop)
 
@@ -193,8 +193,9 @@ def match_lesions_to_teeth(
             tooth_w = max(10.0, tx2 - tx1)
             tooth_h = max(10.0, ty2 - ty1)
 
-            is_maxillary = 11 <= fdi_num <= 28
-            is_mandibular = 31 <= fdi_num <= 48
+            quadrant = fdi_num // 10
+            is_maxillary = quadrant in (1, 2, 5, 6)
+            is_mandibular = quadrant in (3, 4, 7, 8)
             is_molar = (fdi_num % 10) in (6, 7, 8)
 
             axis_apex_xy: Optional[List[float]] = None
@@ -258,6 +259,7 @@ def match_lesions_to_teeth(
 
         if best_fdi is not None and min_dist < 180.0:
             is_rct = best_fdi in rct_set
+            is_deciduous_or_super = ((best_fdi // 10) in (5, 6, 7, 8)) or ((best_fdi % 10) == 9)
             lesion["fdi"] = best_fdi
             lesion["apex_distance"] = round(float(max(0.0, raw_geom_dist)), 1)
             lesion["isolated_anatomical_suspicion"] = False
@@ -266,7 +268,12 @@ def match_lesions_to_teeth(
                 "post_rct_periapical_lesion" if is_rct else "untreated_periapical_lesion"
             )
             conf_val = float(lesion.get("confidence", 0.5))
-            if (
+            if is_deciduous_or_super:
+                # Clinician policy: deciduous (#51-#85) and supernumerary (#19/#29/#39/#49)
+                # periapical findings always require clinician review.
+                lesion["clinical_status"] = "REVIEW_REQUIRED"
+                lesion["rct_confidence_boosted"] = False
+            elif (
                 is_rct
                 and lesion.get("clinical_status") == "REVIEW_REQUIRED"
                 and conf_val >= 0.35
@@ -342,17 +349,39 @@ def link_periapical_with_008_and_013(
             for l in doc_or_teeth.lesions
             if l.category != "periapical" or l.clinician_corrected
         ]
+        corrected_periapical = [
+            l for l in preserved if l.category == "periapical" and l.clinician_corrected
+        ]
+
+        def _box_iou(b1: Sequence[float], b2: Sequence[float]) -> float:
+            ix1, iy1 = max(b1[0], b2[0]), max(b1[1], b2[1])
+            ix2, iy2 = min(b1[2], b2[2]), min(b1[3], b2[3])
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            a1 = max(0.0, b1[2] - b1[0]) * max(0.0, b1[3] - b1[1])
+            a2 = max(0.0, b2[2] - b2[0]) * max(0.0, b2[3] - b2[1])
+            union = a1 + a2 - inter
+            return inter / union if union > 0 else 0.0
+
         for item in matched:
-            raw_box = item.get("bbox") or item.get("bbox_xyxy")
+            raw_box = [float(v) for v in (item.get("bbox") or item.get("bbox_xyxy"))[:4]]
+            item_fdi = item.get("fdi")
+            is_dup = any(
+                (c.fdi == item_fdi and item_fdi is not None) or _box_iou(c.bbox_xyxy, raw_box) >= 0.3
+                for c in corrected_periapical
+            )
+            if is_dup:
+                continue
             preserved.append(
                 LesionAnnotation(
                     category="periapical",
-                    label=str(item.get("lesion_subtype") or "periapical"),
-                    bbox_xyxy=[float(v) for v in raw_box[:4]],
-                    fdi=item.get("fdi"),
+                    label=str(item.get("lesion_subtype") or "Periapical Lesion"),
+                    bbox_xyxy=raw_box,
+                    fdi=item_fdi,
                     confidence=float(item.get("confidence", 0.5)),
                     clinical_status=str(item.get("clinical_status", "DEFINITE")),
                     rct_associated=item.get("rct_associated"),
+                    lesion_subtype=item.get("lesion_subtype"),
+                    isolated_anatomical_suspicion=item.get("isolated_anatomical_suspicion"),
                     clinician_corrected=False,
                 )
             )
